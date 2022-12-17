@@ -1,0 +1,31 @@
+[
+  {
+    "deleted": false,
+    "unusual": false,
+    "id": 4,
+    "ref_id": 4,
+    "video_url": "https:\/\/localhost\/movies\/4.mp4",
+    "updated_at": false,
+    "description": "Test desc",
+    "frequency": null,
+    "tags": [
+      {
+        "id": 4,
+        "tag": "Some tag"
+      }
+    ],
+    "examples": [
+      {
+        "id": 118423,
+        "video_url": "https:\/\/localhost\/movies\/118423.mp4",
+        "description": "Test desc"
+      }
+    ],
+    "words": [
+      {
+        "id": 4,
+        "word": "Test"
+      }
+    ]
+  }
+]
