@@ -21,6 +21,7 @@ import (
 func main() {
 	// Read required parameters
 	loadURL := flag.String("load-from", "", "URL to the API which to load data from")
+	useView := flag.Bool("use-view", false, "Use a materialized view when querying")
 	listen := flag.String("listen", ":8000", "Listen address")
 
 	flag.Parse()
@@ -47,6 +48,92 @@ func main() {
 		log.Printf("loading data from %s", *loadURL)
 		if err := loadData(dbpool, *loadURL); err != nil {
 			log.Fatalf("failed loading data from %s: %v", *loadURL, err)
+		}
+	}
+
+	if *useView {
+		log.Printf("using materialized view")
+
+		// Create a materialized view
+		ct, err := dbpool.Exec(
+			context.Background(),
+			`CREATE MATERIALIZED VIEW IF NOT EXISTS signs_view AS (
+				SELECT
+				signs.id,
+				signs.updated_at,
+				jsonb_build_object(
+					'id', signs.id,
+					'deleted', signs.deleted,
+					'unusual', signs.unusual,
+					'ref_id', signs.ref_id,
+					'video_url', signs.video_url,
+					'updated_at', signs.updated_at,
+					'description', signs.description,
+					'frequency', signs.frequency,
+					'tags', (
+						SELECT jsonb_agg(
+							jsonb_build_object(
+								'id', tags.id,
+								'tag', tags.name
+							)
+						)
+						FROM tags
+						INNER JOIN signs_tags ON signs_tags.sign_id = signs.id AND signs_tags.tag_id = tags.id
+					),
+					'words', (
+						SELECT jsonb_agg(
+							jsonb_build_object(
+								'id', words.id,
+								'word', words.word
+							)
+						)
+						FROM words
+						WHERE words.sign_id = signs.id
+					),
+					'examples', (
+						SELECT jsonb_agg(
+							jsonb_build_object(
+								'id', examples.id,
+								'video_url', examples.video_url,
+								'description', examples.description
+							)
+						)
+						FROM examples
+						WHERE examples.sign_id = signs.id
+					)
+				) AS sign
+				FROM signs
+			)`,
+		)
+		if err != nil {
+			log.Fatalf("unable to create materialized view: %v", err)
+		}
+
+		// Create an index on updated_at
+		if _, err := dbpool.Exec(
+			context.Background(),
+			`CREATE INDEX IF NOT EXISTS signs_view_updated_at_idx ON signs_view (updated_at)`,
+		); err != nil {
+			log.Fatalf("unable to create index on materialized view: %v", err)
+		}
+
+		// Create a unique index on id
+		if _, err := dbpool.Exec(
+			context.Background(),
+			`CREATE UNIQUE INDEX IF NOT EXISTS signs_view_id_idx ON signs_view (id)`,
+		); err != nil {
+			log.Fatalf("unable to create index on materialized view: %v", err)
+		}
+
+		// Refresh the materialized view
+		if ct.RowsAffected() == 0 {
+			ct, err = dbpool.Exec(
+				context.Background(),
+				`REFRESH MATERIALIZED VIEW signs_view`,
+			)
+			if err != nil {
+				log.Fatalf("unable to refresh materialized view: %v", err)
+			}
 		}
 	}
 
@@ -78,59 +165,78 @@ func main() {
 
 		start := time.Now()
 
-		rows, err := dbpool.Query(
-			r.Context(),
-			fmt.Sprintf(
-				`SELECT 
-				json_build_object(
-					'id', signs.id,
-					'deleted', signs.deleted,
-					'unusual', signs.unusual,
-					'ref_id', signs.ref_id,
-					'video_url', signs.video_url,
-					'updated_at', signs.updated_at,
-					'description', signs.description,
-					'frequency', signs.frequency,
-					'tags', (
-						SELECT json_agg(
-							json_build_object(
-								'id', tags.id,
-								'tag', tags.name
-							)
-						)
-						FROM tags
-						INNER JOIN signs_tags ON signs_tags.sign_id = signs.id AND signs_tags.tag_id = tags.id
-					),
-					'words', (
-						SELECT json_agg(
-							json_build_object(
-								'id', words.id,
-								'word', words.word
-							)
-						)
-						FROM words
-						WHERE words.sign_id = signs.id
-					),
-					'examples', (
-						SELECT json_agg(
-							json_build_object(
-								'id', examples.id,
-								'video_url', examples.video_url,
-								'description', examples.description
-							)
-						)
-						FROM examples
-						WHERE examples.sign_id = signs.id
-					)
-				)
-				FROM signs
-				WHERE %s
-				ORDER BY signs.id`,
-				strings.Join(where, " AND "),
-			),
-			params...,
+		var (
+			rows    pgx.Rows
+			rowsErr error
 		)
-		if err != nil {
+
+		if *useView {
+			rows, rowsErr = dbpool.Query(
+				r.Context(),
+				fmt.Sprintf(
+					`SELECT
+					sign
+					FROM signs_view
+					WHERE %s`,
+					strings.Join(where, " AND "),
+				),
+				params...,
+			)
+		} else {
+			rows, rowsErr = dbpool.Query(
+				r.Context(),
+				fmt.Sprintf(
+					`SELECT 
+					json_build_object(
+						'id', signs.id,
+						'deleted', signs.deleted,
+						'unusual', signs.unusual,
+						'ref_id', signs.ref_id,
+						'video_url', signs.video_url,
+						'updated_at', signs.updated_at,
+						'description', signs.description,
+						'frequency', signs.frequency,
+						'tags', (
+							SELECT json_agg(
+								json_build_object(
+									'id', tags.id,
+									'tag', tags.name
+								)
+							)
+							FROM tags
+							INNER JOIN signs_tags ON signs_tags.sign_id = signs.id AND signs_tags.tag_id = tags.id
+						),
+						'words', (
+							SELECT json_agg(
+								json_build_object(
+									'id', words.id,
+									'word', words.word
+								)
+							)
+							FROM words
+							WHERE words.sign_id = signs.id
+						),
+						'examples', (
+							SELECT json_agg(
+								json_build_object(
+									'id', examples.id,
+									'video_url', examples.video_url,
+									'description', examples.description
+								)
+							)
+							FROM examples
+							WHERE examples.sign_id = signs.id
+						)
+					)
+					FROM signs
+					WHERE %s
+					ORDER BY signs.id`,
+					strings.Join(where, " AND "),
+				),
+				params...,
+			)
+		}
+		if rowsErr != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			log.Printf("error querying database: %v", err)
 			return
