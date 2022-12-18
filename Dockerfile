@@ -17,13 +17,18 @@ RUN adduser \
 WORKDIR $GOPATH/src/tspcompat/
 COPY . .
 
-# Build the binary
-RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompat ./cmd/proxy/main.go
+# Fetch dependencies
+RUN go mod download
+
+# Build the binaries
+RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatproxy ./cmd/proxy/main.go
+RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatapi ./cmd/api/main.go
 
 FROM scratch
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
-COPY --from=builder /go/bin/tspcompat /go/bin/tspcompat
+COPY --from=builder /go/bin/tspcompatproxy /go/bin/tspcompatproxy
+COPY --from=builder /go/bin/tspcompatapi /go/bin/tspcompatapi
 USER tsp:tsp
-ENTRYPOINT ["/go/bin/tspcompat"]
+ENTRYPOINT ["/go/bin/tspcompatproxy"]
