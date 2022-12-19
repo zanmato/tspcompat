@@ -1,6 +1,6 @@
 FROM golang:1.19-alpine as builder
 
-RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificates
+RUN apk update && apk add --no-cache git ca-certificates tzdata && update-ca-certificates
 ENV USER=tsp
 ENV UID=10001
 
@@ -25,6 +25,8 @@ RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatproxy 
 RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatapi ./cmd/api/main.go
 
 FROM scratch
+ENV TZ=Europe/Stockholm
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group

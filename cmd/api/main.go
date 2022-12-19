@@ -153,7 +153,11 @@ func main() {
 
 		// Parse query params
 		if r.URL.Query().Has("changed_at") {
-			changedAt, err := time.Parse("2006-01-02 15:04", r.URL.Query().Get("changed_at"))
+			changedAt, err := time.ParseInLocation(
+				"2006-01-02 15:04",
+				r.URL.Query().Get("changed_at"),
+				time.Local,
+			)
 			if err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				return
