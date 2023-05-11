@@ -1,22 +1,15 @@
-# tspcompat
+# tsp web app
 
-Transforms the new format into the legacy app format.
-
-## Build
-
-```sh
-$ make linux
-```
+This requires API access to [Svenskt teckenspråkslexikon](https://teckensprakslexikon.su.se)
 
 ## Development
 
-```sh
-$ go run cmd/proxy/main.go --new-url=http://localhost/test.json --old-url=http://localhost/old.json
-$ DB_DSN=postgres://tspcompat:tspcompat@localhost:5450/tspcompat?sslmode=disable\&timezone=Europe/Stockholm go run cmd/api/main.go --load-from=http://localhost/test.json
-```
+* Start the DB with `docker-compose up -d`
+* Copy `config.example.toml` and save it as `config.toml`, replace `data_url`
+* Start the API service `go run cmd/api/*.go`
+* Copy `frontend/.env.example` and save it as `frontend/.env`
+* Start the frontend `cd frontend; yarn dev`
 
-For even faster results, use a materialized view with `--use-view`:  
+### Optional
 
-```sh
-$ DB_DSN=postgres://tspcompat:tspcompat@localhost:5450/tspcompat?sslmode=disable\&timezone=Europe/Stockholm go run cmd/api/main.go --load-from=http://localhost/test.json --use-view
-```
+* Download the [FreeSans SWL font](https://zrajm.github.io/teckentranskription/freesans-swl.woff2) and save it to `frontend/public/static/fonts/freesans-swl.woff2`

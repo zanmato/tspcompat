@@ -1,4 +1,19 @@
-FROM golang:1.19-alpine as builder
+FROM node:18-alpine as frontend-builder
+
+WORKDIR /app
+COPY frontend/package.json .
+COPY frontend/yarn.lock .
+RUN yarn install
+
+RUN touch /app/.env && echo "VITE_API_URL=" >> /app/.env
+
+COPY frontend/public /app/public
+COPY frontend/vite.config.js .
+COPY frontend/src /app/src
+COPY frontend/index.html /app/index.html
+RUN yarn build
+
+FROM golang:1.20-alpine as backend-builder
 
 RUN apk update && apk add --no-cache git ca-certificates tzdata && update-ca-certificates
 ENV USER=tsp
@@ -14,23 +29,19 @@ RUN adduser \
     --uid "${UID}" \    
     "${USER}"
 
-WORKDIR $GOPATH/src/tspcompat/
+WORKDIR $GOPATH/src/tsp/
 COPY . .
 
-# Fetch dependencies
 RUN go mod download
-
-# Build the binaries
-RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatproxy ./cmd/proxy/main.go
-RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/tspcompatapi ./cmd/api/main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-extldflags "-static" -w -s' -o /app/tsp ./cmd/api/main.go ./cmd/api/migrate.go
 
 FROM scratch
 ENV TZ=Europe/Stockholm
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-COPY --from=builder /go/bin/tspcompatproxy /go/bin/tspcompatproxy
-COPY --from=builder /go/bin/tspcompatapi /go/bin/tspcompatapi
+COPY --from=backend-builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=backend-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=backend-builder /etc/passwd /etc/passwd
+COPY --from=backend-builder /etc/group /etc/group
+COPY --from=backend-builder /app/tsp /app/tsp
+COPY --from=frontend-builder /app/dist /app/dist
 USER tsp:tsp
-ENTRYPOINT ["/go/bin/tspcompatproxy"]
+ENTRYPOINT ["/app/tsp"]

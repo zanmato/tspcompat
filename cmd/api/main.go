@@ -2,277 +2,143 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
+	"path"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"tsp/internal/sign"
+
+	"github.com/BurntSushi/toml"
+	zapadapter "github.com/jackc/pgx-zap"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zanmato/tspcompat/internal/sign"
+	"github.com/jackc/pgx/v5/tracelog"
+	"github.com/julienschmidt/httprouter"
+	"github.com/robfig/cron/v3"
+	"github.com/z0ne-dev/mgx/v2"
+	"go.uber.org/zap"
 )
 
 func main() {
-	// Read required parameters
-	loadURL := flag.String("load-from", "", "URL to the API which to load data from")
-	useView := flag.Bool("use-view", false, "Use a materialized view when querying")
-	listen := flag.String("listen", ":8000", "Listen address")
+	// Load config
+	cfg := struct {
+		App struct {
+			Listen string
+			Local  bool
+		}
+		Signs struct {
+			DataURL         string `toml:"data_url"`
+			RefreshSchedule string `toml:"refresh_schedule"`
+		}
+		Database struct {
+			DSN string
+		}
+	}{}
 
-	flag.Parse()
+	wd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("unable to get working directory: %v", err)
+	}
 
-	dsn, exists := os.LookupEnv("DB_DSN")
-	if !exists {
-		log.Fatal("DB_DSN environment variable not set")
+	if _, err := toml.DecodeFile(path.Join(wd, "config.toml"), &cfg); err != nil {
+		log.Fatalf("unable to decode config: %v", err)
+	}
+
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("unable to initialize zap logger: %v", err)
 	}
 
 	// Open DB
-	connConf, err := pgxpool.ParseConfig(dsn)
+	connConf, err := pgxpool.ParseConfig(cfg.Database.DSN)
 	if err != nil {
-		log.Fatalf("unable to parse database DSN: %v", err)
+		logger.Fatal("unable to parse database DSN", zap.Error(err))
+	}
+
+	connConf.ConnConfig.Tracer = &tracelog.TraceLog{
+		Logger:   zapadapter.NewLogger(logger),
+		LogLevel: tracelog.LogLevelWarn,
 	}
 
 	dbpool, err := pgxpool.NewWithConfig(context.Background(), connConf)
 	if err != nil {
-		log.Fatalf("unable to connect to database: %v", err)
+		logger.Fatal("unable to connect to database", zap.Error(err))
 	}
 	defer dbpool.Close()
 
-	// Load data?
-	if loadURL != nil && *loadURL != "" {
-		log.Printf("loading data from %s", *loadURL)
-		if err := loadData(dbpool, *loadURL); err != nil {
-			log.Fatalf("failed loading data from %s: %v", *loadURL, err)
+	migrator, err := mgx.New(
+		mgx.Migrations(
+			mgx.NewMigration("schema", migrateSchema),
+			mgx.NewMigration("views", migrateViews),
+		),
+		mgx.Log(&migrationLogger{Logger: logger}),
+	)
+	if err != nil {
+		logger.Fatal("unable to create migrator", zap.Error(err))
+	}
+
+	if err := migrator.Migrate(context.Background(), dbpool); err != nil {
+		logger.Fatal("unable to migrate database", zap.Error(err))
+	}
+
+	// Create a sync client
+	syncClient, err := sign.NewSyncClient(dbpool)
+	if err != nil {
+		logger.Fatal("unable to create sync client", zap.Error(err))
+	}
+
+	// Check if we have data, otherwise sync immediately
+	var hasData bool
+	if err := dbpool.QueryRow(
+		context.Background(),
+		`SELECT EXISTS (SELECT * FROM signs)`,
+	).Scan(&hasData); err != nil {
+		logger.Fatal("unable to check if there is data", zap.Error(err))
+	}
+
+	if !hasData {
+		logger.Info("no data found, running sync job")
+		if err := syncData(dbpool, syncClient, cfg.Signs.DataURL); err != nil {
+			logger.Fatal("unable to sync data", zap.Error(err))
 		}
 	}
 
-	if *useView {
-		log.Printf("using materialized view")
-
-		// Create a materialized view
-		ct, err := dbpool.Exec(
-			context.Background(),
-			`CREATE MATERIALIZED VIEW IF NOT EXISTS signs_view AS (
-				SELECT
-				signs.id,
-				signs.updated_at,
-				jsonb_build_object(
-					'id', signs.id,
-					'deleted', signs.deleted,
-					'unusual', signs.unusual,
-					'ref_id', signs.ref_id,
-					'video_url', signs.video_url,
-					'updated_at', signs.updated_at,
-					'description', signs.description,
-					'frequency', signs.frequency,
-					'tags', (
-						SELECT jsonb_agg(
-							jsonb_build_object(
-								'id', tags.id,
-								'tag', tags.name
-							)
-						)
-						FROM tags
-						INNER JOIN signs_tags ON signs_tags.sign_id = signs.id AND signs_tags.tag_id = tags.id
-					),
-					'words', (
-						SELECT jsonb_agg(
-							jsonb_build_object(
-								'id', words.id,
-								'word', words.word
-							)
-						)
-						FROM words
-						WHERE words.sign_id = signs.id
-					),
-					'examples', (
-						SELECT jsonb_agg(
-							jsonb_build_object(
-								'id', examples.id,
-								'video_url', examples.video_url,
-								'description', examples.description
-							)
-						)
-						FROM examples
-						WHERE examples.sign_id = signs.id
-					)
-				) AS sign
-				FROM signs
-			)`,
-		)
-		if err != nil {
-			log.Fatalf("unable to create materialized view: %v", err)
-		}
-
-		// Create an index on updated_at
-		if _, err := dbpool.Exec(
-			context.Background(),
-			`CREATE INDEX IF NOT EXISTS signs_view_updated_at_idx ON signs_view (updated_at)`,
-		); err != nil {
-			log.Fatalf("unable to create index on materialized view: %v", err)
-		}
-
-		// Create a unique index on id
-		if _, err := dbpool.Exec(
-			context.Background(),
-			`CREATE UNIQUE INDEX IF NOT EXISTS signs_view_id_idx ON signs_view (id)`,
-		); err != nil {
-			log.Fatalf("unable to create index on materialized view: %v", err)
-		}
-
-		// Refresh the materialized view
-		if ct.RowsAffected() == 0 {
-			ct, err = dbpool.Exec(
-				context.Background(),
-				`REFRESH MATERIALIZED VIEW signs_view`,
-			)
-			if err != nil {
-				log.Fatalf("unable to refresh materialized view: %v", err)
-			}
-		}
+	// Schedule data sync
+	c := cron.New(cron.WithLocation(time.Local))
+	if _, err := c.AddFunc(cfg.Signs.RefreshSchedule, syncJob(dbpool, syncClient, cfg.Signs.DataURL, logger)); err != nil {
+		logger.Fatal("unable to add sync job", zap.Error(err))
 	}
+
+	c.Start()
+
+	// HTTP Router
+	router := httprouter.New()
+
+	if cfg.App.Local {
+		router.GlobalOPTIONS = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			header := w.Header()
+			header.Set("Access-Control-Allow-Origin", "*")
+			header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+			w.WriteHeader(http.StatusNoContent)
+		})
+	} else {
+		// Front controller
+		router.NotFound = http.FileServer(http.Dir("/app/dist"))
+	}
+
+	// Create signs API controller
+	signsController := sign.NewAPIController(dbpool, logger)
+	router.GET("/api/words", localCORS(cfg.App.Local, signsController.WordIndex))
+	router.GET("/api/categories", localCORS(cfg.App.Local, signsController.CategoryIndex))
+	router.GET("/api/signs/:id", localCORS(cfg.App.Local, signsController.SignShow))
 
 	srv := http.Server{
-		Addr: *listen,
+		Addr:    cfg.App.Listen,
+		Handler: router,
 	}
-
-	// Add a handler returning signs one by one
-	http.HandleFunc("/signs.json", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		params := []interface{}{}
-		where := []string{"TRUE"}
-
-		// Parse query params
-		if r.URL.Query().Has("changed_at") {
-			changedAt, err := time.ParseInLocation(
-				"2006-01-02 15:04",
-				r.URL.Query().Get("changed_at"),
-				time.Local,
-			)
-			if err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			params = append(params, changedAt)
-			where = append(where, "updated_at > $1")
-		}
-
-		start := time.Now()
-
-		var (
-			rows    pgx.Rows
-			rowsErr error
-		)
-
-		if *useView {
-			rows, rowsErr = dbpool.Query(
-				r.Context(),
-				fmt.Sprintf(
-					`SELECT
-					sign
-					FROM signs_view
-					WHERE %s`,
-					strings.Join(where, " AND "),
-				),
-				params...,
-			)
-		} else {
-			rows, rowsErr = dbpool.Query(
-				r.Context(),
-				fmt.Sprintf(
-					`SELECT 
-					json_build_object(
-						'id', signs.id,
-						'deleted', signs.deleted,
-						'unusual', signs.unusual,
-						'ref_id', signs.ref_id,
-						'video_url', signs.video_url,
-						'updated_at', signs.updated_at,
-						'description', signs.description,
-						'frequency', signs.frequency,
-						'tags', (
-							SELECT json_agg(
-								json_build_object(
-									'id', tags.id,
-									'tag', tags.name
-								)
-							)
-							FROM tags
-							INNER JOIN signs_tags ON signs_tags.sign_id = signs.id AND signs_tags.tag_id = tags.id
-						),
-						'words', (
-							SELECT json_agg(
-								json_build_object(
-									'id', words.id,
-									'word', words.word
-								)
-							)
-							FROM words
-							WHERE words.sign_id = signs.id
-						),
-						'examples', (
-							SELECT json_agg(
-								json_build_object(
-									'id', examples.id,
-									'video_url', examples.video_url,
-									'description', examples.description
-								)
-							)
-							FROM examples
-							WHERE examples.sign_id = signs.id
-						)
-					)
-					FROM signs
-					WHERE %s
-					ORDER BY signs.id`,
-					strings.Join(where, " AND "),
-				),
-				params...,
-			)
-		}
-		if rowsErr != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			log.Printf("error querying database: %v", err)
-			return
-		}
-		defer rows.Close()
-
-		w.Header().Add("Content-Type", "application/json")
-		w.Write([]byte("["))
-
-		var (
-			b []byte
-			i int
-		)
-		for rows.Next() {
-			if err := rows.Scan(&b); err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				log.Printf("error scanning database row: %v", err)
-				return
-			}
-
-			if i > 0 {
-				w.Write([]byte(","))
-			}
-
-			w.Write(b)
-			i++
-		}
-
-		w.Write([]byte("]"))
-
-		log.Printf("served %d signs in %s", i, time.Since(start))
-	})
 
 	// Gracefully shutdown the server
 	connClosed := make(chan struct{})
@@ -281,121 +147,68 @@ func main() {
 		signal.Notify(sigint, os.Interrupt)
 		<-sigint
 		if err := srv.Shutdown(context.Background()); err != nil {
-			log.Printf("server shutdown error: %v", err)
+			logger.Error("server shutdown error", zap.Error(err))
 		}
+		cronCtx := c.Stop()
+		<-cronCtx.Done()
 		close(connClosed)
 	}()
 
-	log.Printf("listening on %s", *listen)
+	logger.Info("starting server", zap.String("listen", srv.Addr))
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("server quit unexpectedly: %v", err)
+		logger.Error("server quit unexpectedly", zap.Error(err))
 	}
 
 	<-connClosed
 }
 
-func loadData(db *pgxpool.Pool, dataURL string) error {
-	u, err := url.Parse(dataURL)
-	if err != nil {
-		return fmt.Errorf("unable to parse data URL: %w", err)
+func syncJob(db *pgxpool.Pool, sc *sign.SyncClient, dataURL string, logger *zap.Logger) func() {
+	return func() {
+		started := time.Now()
+		logger.Info("starting sync job")
+		if err := syncData(db, sc, dataURL); err != nil {
+			logger.Error("failed loading data", zap.Error(err))
+		}
+		logger.Info("sync job finished", zap.Duration("duration", time.Since(started)))
+	}
+}
+
+func syncData(db *pgxpool.Pool, sc *sign.SyncClient, dataURL string) error {
+	if err := sc.Sync(context.Background(), dataURL); err != nil {
+		return fmt.Errorf("failed loading data from %s: %w", dataURL, err)
 	}
 
-	res, err := http.Get(u.String())
-	if err != nil {
-		log.Fatalf("error creating request to %s: %v", u, err)
-	}
-	defer res.Body.Close()
-
-	ctx := context.Background()
-
-	// Remove all the existing data
 	if _, err := db.Exec(
-		ctx,
-		`TRUNCATE TABLE signs CASCADE`,
+		context.Background(),
+		`REFRESH MATERIALIZED VIEW CONCURRENTLY signs_view`,
 	); err != nil {
-		return fmt.Errorf("error truncating signs table: %w", err)
+		return fmt.Errorf("unable to refresh materialized view: %w", err)
 	}
 
-	dec := json.NewDecoder(res.Body)
-
-	// Read the opening bracket
-	if _, err := dec.Token(); err != nil {
-		return err
+	if _, err := db.Exec(
+		context.Background(),
+		`REFRESH MATERIALIZED VIEW CONCURRENTLY words_view`,
+	); err != nil {
+		return fmt.Errorf("unable to refresh materialized view: %w", err)
 	}
 
-	batch := &pgx.Batch{}
-
-	// Read the array, record by record
-	var s sign.NewSign
-	for dec.More() {
-		if err := dec.Decode(&s); err != nil {
-			return err
-		}
-
-		if l := batch.Len(); l >= 1000 {
-			res := db.SendBatch(ctx, batch)
-			if err := res.Close(); err != nil {
-				return fmt.Errorf("error executing batch: %w", err)
-			}
-			batch = &pgx.Batch{}
-
-			log.Printf("inserted %d signs", l)
-		}
-
-		// Insert the sign
-		batch.Queue(
-			`INSERT INTO signs (id, ref_id, video_url, description, unusual, frequency, deleted)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			s.ID, s.RefID, s.VideoURL, s.Description, s.Unusual, s.Frequency, s.Deleted,
-		)
-
-		// Insert the tags
-		for _, t := range s.Tags {
-			batch.Queue(
-				`INSERT INTO tags (id, name)
-				VALUES ($1, $2)
-				ON CONFLICT (id) DO NOTHING`,
-				t.ID, t.Tag,
-			)
-
-			batch.Queue(
-				`INSERT INTO signs_tags (sign_id, tag_id)
-				VALUES ($1, $2)
-				ON CONFLICT (sign_id, tag_id) DO NOTHING`,
-				s.ID, t.ID,
-			)
-		}
-
-		// Insert the words
-		for _, w := range s.Words {
-			batch.Queue(
-				`INSERT INTO words (id, sign_id, word)
-				VALUES ($1, $2, $3)
-				ON CONFLICT (id) DO NOTHING`,
-				w.ID, s.ID, w.Word,
-			)
-		}
-
-		// Insert the examples
-		for _, e := range s.Examples {
-			batch.Queue(
-				`INSERT INTO examples (id, sign_id, video_url, description)
-				VALUES ($1, $2, $3, $4)
-				ON CONFLICT (id) DO NOTHING`,
-				e.ID, s.ID, e.VideoURL, e.Description,
-			)
-		}
-	}
-
-	// Send the last batch
-	if l := batch.Len(); l > 0 {
-		res := db.SendBatch(ctx, batch)
-		if err := res.Close(); err != nil {
-			return fmt.Errorf("error executing batch: %w", err)
-		}
-
-		log.Printf("inserted %d signs", l)
+	if _, err := db.Exec(
+		context.Background(),
+		`REFRESH MATERIALIZED VIEW CONCURRENTLY categories_view`,
+	); err != nil {
+		return fmt.Errorf("unable to refresh materialized view: %w", err)
 	}
 
 	return nil
+}
+
+func localCORS(local bool, next httprouter.Handle) httprouter.Handle {
+	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+		if local {
+			header := w.Header()
+			header.Set("Access-Control-Allow-Origin", "*")
+			header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+		}
+		next(w, r, ps)
+	}
 }

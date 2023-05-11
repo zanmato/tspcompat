@@ -1,0 +1,10 @@
+[app]
+listen = ":8000"
+local = true
+
+[signs]
+data_url = "http://localhost"
+refresh_schedule = "0 2 * * *"
+
+[database]
+dsn = "postgres://tspcompat:tspcompat@localhost:5450/tspcompat?sslmode=disable&timezone=Europe/Stockholm"

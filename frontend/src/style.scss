@@ -1,0 +1,195 @@
+@import "vue-select/dist/vue-select.css";
+
+:root {
+  font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  font-size: 16px;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: #fff;
+  background-color: #000000;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+
+  --background-color: #000000;
+  --separator-color: #54545899;
+  --secondary-label-color: #ebebf599;
+  --tint-color: #0a84ff;
+  --secondary-background-color: #1c1c1eff;
+
+  --vs-background-color: #000000;
+
+  --vs-controls-color: #664cc3;
+  --vs-border-color: #54545899;
+
+  --vs-dropdown-bg: #1c1c1eff;
+  --vs-dropdown-color: #fff;
+  --vs-dropdown-option-color: #fff;
+
+  --vs-selected-bg: #0a84ff;
+  --vs-selected-color: #eeeeee;
+
+  --vs-search-input-color: #ffffff;
+
+  --vs-dropdown-option--active-bg: #0a84ff;
+  --vs-dropdown-option--active-color: #eeeeee;
+}
+
+@font-face {
+  font-family: FreeSans SWL;
+  font-style: normal;
+  font-weight: 400;
+  src: local("FreeSans SWL"), local("FreeSans-SWL"),
+    url("/static/fonts/freesans-swl.woff2") format("woff2");
+}
+
+html {
+  box-sizing: border-box;
+}
+*,
+*:before,
+*:after {
+  box-sizing: inherit;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+}
+
+a {
+  text-decoration: none;
+}
+
+#app {
+  width: 100%;
+  padding-bottom: 61px;
+}
+
+.header {
+  .header-content {
+    height: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    button {
+      background: none;
+      border: none;
+      cursor: pointer;
+    }
+
+    h1 {
+      font-weight: 600;
+      margin: 0;
+    }
+  }
+
+  height: 80px;
+  padding: 0 15px;
+
+  background-color: var(--secondary-background-color);
+  border-bottom: 1px solid var(--separator-color);
+}
+
+.description {
+  background-color: var(--secondary-background-color);
+  border-top: 1px solid var(--separator-color);
+  border-bottom: 1px solid var(--separator-color);
+
+  padding: 10px 15px;
+}
+
+.word {
+  height: 40px;
+  line-height: 40px;
+  border-bottom: 1px solid var(--separator-color);
+  text-align: left;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  position: relative;
+  padding-right: 21px;
+
+  span {
+    flex: 1;
+  }
+
+  .unusual {
+    color: var(--secondary-label-color);
+    font-size: 0.8rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    margin: 0 10px;
+  }
+
+  .bi {
+    position: absolute;
+    right: 0;
+    margin: 0 5px 0 0;
+    text-align: right;
+  }
+}
+
+.list {
+  margin-bottom: 15px;
+  h3 {
+    color: var(--secondary-label-color);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    font-weight: normal;
+    margin: 0 0 5px;
+    padding: 0 15px;
+  }
+  ul {
+    list-style-type: none;
+    margin: 0;
+    padding: 0;
+    background-color: var(--secondary-background-color);
+    border-top: 1px solid var(--separator-color);
+
+    li {
+      padding: 10px 15px;
+      border-bottom: 1px solid var(--separator-color);
+    }
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #000;
+    background-color: #ffffff;
+    --background-color: #ffffff;
+    --separator-color: #3c3c434a;
+    --secondary-label-color: #3c3c4399;
+    --tint-color: #007aff;
+    --secondary-background-color: #f5f5f5;
+
+    --vs-background-color: #ffffff;
+
+    --vs-controls-color: #664cc3;
+    --vs-border-color: #3c3c434a;
+
+    --vs-dropdown-bg: #fff;
+    --vs-dropdown-color: #000;
+    --vs-dropdown-option-color: #000;
+
+    --vs-selected-bg: #007aff;
+    --vs-selected-color: #eeeeee;
+
+    --vs-search-input-color: #000;
+
+    --vs-dropdown-option--active-bg: #007aff;
+    --vs-dropdown-option--active-color: #eeeeee;
+  }
+}
+
+.vs__dropdown-toggle {
+  background-color: var(--vs-background-color);
+}

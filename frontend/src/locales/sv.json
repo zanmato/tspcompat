@@ -1,0 +1,14 @@
+{
+  "words": "Ord",
+  "favorites": "Favoriter",
+  "categories": "Ämnen",
+  "search": "Sök",
+  "phrases": "Exempel",
+  "unusualSign": "Tecknet är mindre vanligt",
+  "noResults": "Inga resultat",
+  "comment": "Kommentar",
+  "about": "Om",
+  "aboutText": "Innehåll från {source} CC-BY-NC-SA",
+  "vocableInCorpus": "Glosa i STS-korpus",
+  "transcription": "Transkription"
+}

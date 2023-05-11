@@ -1,0 +1,14 @@
+{
+  "words": "Words",
+  "favorites": "Favorites",
+  "categories": "Categories",
+  "search": "Search",
+  "phrases": "Phrases",
+  "unusualSign": "The sign is unusual",
+  "noResults": "No results",
+  "comment": "Comment",
+  "about": "About",
+  "aboutText": "Content from {source} CC-BY-NC-SA",
+  "vocableInCorpus": "Word in STS corpus",
+  "transcription": "Transcription"
+}
