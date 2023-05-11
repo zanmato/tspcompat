@@ -126,7 +126,11 @@ func main() {
 		})
 	} else {
 		// Front controller
-		router.NotFound = http.FileServer(http.Dir("/app/dist"))
+		router.ServeFiles("/assets/*filepath", http.Dir("/app/dist/assets"))
+		router.ServeFiles("/static/*filepath", http.Dir("/app/dist/static"))
+		router.NotFound = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, "/app/dist/index.html")
+		})
 	}
 
 	// Create signs API controller
