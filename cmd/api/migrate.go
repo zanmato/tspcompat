@@ -201,7 +201,6 @@ func migrateViews(ctx context.Context, cmd mgx.Commands) error {
 				to_tsvector('simple', array_to_string(ARRAY[words.word] || signs.hidden_words, ',')) || to_tsvector('simple', signs.id::text) AS tsv
 				FROM signs
 				INNER JOIN words ON words.sign_id = signs.id
-				ORDER BY LOWER(words.word) COLLATE "se-SE-x-icu"
 			)`,
 	); err != nil {
 		return fmt.Errorf("unable to create materialized view: %w", err)
@@ -223,7 +222,6 @@ func migrateViews(ctx context.Context, cmd mgx.Commands) error {
 					)
 				) AS category
 				FROM categories
-				ORDER BY LOWER(categories.name) COLLATE "se-SE-x-icu"
 			)`,
 	); err != nil {
 		return fmt.Errorf("unable to create materialized view: %w", err)
@@ -263,6 +261,24 @@ func migrateViews(ctx context.Context, cmd mgx.Commands) error {
 	if _, err := cmd.Exec(
 		ctx,
 		`CREATE UNIQUE INDEX IF NOT EXISTS categories_view_id_idx ON categories_view (id)`,
+	); err != nil {
+		return fmt.Errorf("unable to create index on materialized view: %w", err)
+	}
+
+	return nil
+}
+
+func migrateNormalizedName(ctx context.Context, cmd mgx.Commands) error {
+	if _, err := cmd.Exec(
+		ctx,
+		`CREATE INDEX IF NOT EXISTS words_view_normalized_name_idx ON words_view USING BTREE (LOWER(word->>2) COLLATE "se-SE-x-icu")`,
+	); err != nil {
+		return fmt.Errorf("unable to create index on materialized view: %w", err)
+	}
+
+	if _, err := cmd.Exec(
+		ctx,
+		`CREATE INDEX IF NOT EXISTS categories_view_normalized_name_idx ON categories_view USING BTREE (LOWER(category->>1) COLLATE "se-SE-x-icu")`,
 	); err != nil {
 		return fmt.Errorf("unable to create index on materialized view: %w", err)
 	}

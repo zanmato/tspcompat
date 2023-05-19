@@ -73,6 +73,7 @@ func main() {
 		mgx.Migrations(
 			mgx.NewMigration("schema", migrateSchema),
 			mgx.NewMigration("views", migrateViews),
+			mgx.NewMigration("normalized name", migrateNormalizedName),
 		),
 		mgx.Log(&migrationLogger{Logger: logger}),
 	)

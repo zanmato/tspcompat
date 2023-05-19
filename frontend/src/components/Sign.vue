@@ -35,7 +35,9 @@ fetchSign(router.currentRoute.value.params.id);
         <small>{{ state.sign.id }}</small>
       </div>
       <div class="right-controls">
-        <button type="button" @click="favoritesStore.toggleFavorite(state.sign)">
+        <button
+          type="button"
+          @click="favoritesStore.toggleFavorite(state.sign)">
           <HeartFillIcon v-if="favoritesStore.isFavorite(state.sign.id)" />
           <HeartIcon v-else />
         </button>
@@ -51,8 +53,7 @@ fetchSign(router.currentRoute.value.params.id);
       loop
       autoplay
       controls
-      controlslist="nodownload"
-    />
+      controlslist="nodownload" />
     <p class="description">
       {{ state.sign.description }}
     </p>
@@ -73,9 +74,9 @@ fetchSign(router.currentRoute.value.params.id);
           <a
             :href="`https://teckensprakskorpus.su.se/#/?q=${state.sign.vocable}`"
             target="_blank"
-            rel="nofollow"
-            >{{ state.sign.vocable }}</a
-          >
+            rel="nofollow">
+            {{ state.sign.vocable }}
+          </a>
         </li>
       </ul>
     </div>
@@ -93,7 +94,9 @@ fetchSign(router.currentRoute.value.params.id);
       <h3>{{ t("categories") }}</h3>
       <ul>
         <li v-for="cat in state.sign.categories">
-          {{ cat.name }}
+          <router-link :to="{ name: 'CategoryWords', params: { id: cat.id } }">
+            {{ cat.name }}
+          </router-link>
         </li>
       </ul>
     </div>
@@ -118,8 +121,7 @@ fetchSign(router.currentRoute.value.params.id);
             muted
             loop
             controls
-            controlslist="nodownload"
-          />
+            controlslist="nodownload" />
           {{ ph.phrase }}
         </li>
       </ul>

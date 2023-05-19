@@ -28,7 +28,7 @@ func NewAPIController(db *pgxpool.Pool, logger *zap.Logger) *APIController {
 
 func (c *APIController) WordIndex(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	where := []string{"TRUE"}
-	orderBy := ""
+	orderBy := `ORDER BY LOWER(word->>2) COLLATE "se-SE-x-icu"`
 	params := []interface{}{}
 	pc := 1
 
@@ -70,7 +70,6 @@ func (c *APIController) WordIndex(w http.ResponseWriter, r *http.Request, _ http
 		params = append(params, query)
 		where = append(where, fmt.Sprintf("words_view.tsv @@ to_tsquery('swedish', $%d)", pc))
 		orderBy = fmt.Sprintf("ORDER BY ts_rank_cd(words_view.tsv, to_tsquery('swedish', $%d), 8|1) DESC", pc)
-		pc++
 	}
 
 	// Query
@@ -127,7 +126,8 @@ func (c *APIController) CategoryIndex(w http.ResponseWriter, r *http.Request, _ 
 		r.Context(),
 		`SELECT
 		categories_view.category
-		FROM categories_view`,
+		FROM categories_view
+		ORDER BY LOWER(category->>1) COLLATE "se-SE-x-icu"`,
 	)
 	if err != nil {
 		c.logger.Error("unable to query categories", zap.Error(err))
