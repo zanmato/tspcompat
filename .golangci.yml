@@ -1,0 +1,48 @@
+run:
+  tests: false
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    - unconvert
+    - gocritic
+    - exportloopref
+    - whitespace
+    - misspell
+    - thelper
+    - revive
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+
+  revive:
+    rules:
+      - name: var-naming
+        severity: error
+        disabled: false
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - singleCaseSwitch
+      - unnecessaryBlock
+      - unnamedResult
+      - paramTypeCombine
+      - emptyStringTest
+      - regexpSimplify
+      - preferStringWriter
+      - badRegexp
+      - emptyFallthrough
+      - unlabelStmt
+      - nestingReduce
+      - hugeParam
